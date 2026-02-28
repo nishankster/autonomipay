@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ach-rtp-config
+  namespace: default
+data:
+  database-url: "jdbc:postgresql://postgres-service:5432/ach_rtp_db"
+  rabbitmq-host: "rabbitmq-service"
+  rabbitmq-port: "5672"
+  ach-max-file-size: "10485760"
+  ach-max-entries-per-batch: "10000"
+  rtp-message-timeout-ms: "30000"
+  rtp-schema-validation-enabled: "true"
+  mq-exchange-name: "rtp-gateway"
+  mq-routing-key: "rtp.credit.transfer"
+  mq-retry-max-attempts: "3"
+  mq-retry-backoff-ms: "1000"

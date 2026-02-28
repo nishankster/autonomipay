@@ -1,0 +1,131 @@
+spring:
+  application:
+    name: ach-to-rtp-service
+  
+  # JPA/Database Configuration for Production
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+        use_sql_comments: false
+    show-sql: false
+    open-in-view: false
+  
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://postgres-service:5432/ach_rtp_db}
+    username: ${DATABASE_USERNAME:postgres}
+    password: ${DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      auto-commit: true
+  
+  # RabbitMQ Configuration for Production
+  rabbitmq:
+    host: ${RABBITMQ_HOST:rabbitmq-service}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:}
+    virtual-host: /
+    connection-timeout: 30000
+    publisher-confirms: true
+    publisher-returns: true
+  
+  # Jackson Configuration
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      indent-output: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# Server Configuration
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+  compression:
+    enabled: true
+    min-response-size: 1024
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+    accept-count: 100
+    max-connections: 10000
+
+# Logging Configuration for Production
+logging:
+  level:
+    root: WARN
+    com.example.ach2rtp: INFO
+    org.springframework.web: WARN
+    org.springframework.amqp: WARN
+    org.hibernate: WARN
+    AUDIT: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: /app/logs/ach-to-rtp-service.log
+    max-size: 100MB
+    max-history: 30
+    total-size-cap: 10GB
+
+# Actuator Configuration for Production
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,info,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+      show-components: when-authorized
+      probes:
+        enabled: true
+  health:
+    livenessState:
+      enabled: true
+    readinessState:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        ach.file.parsing.duration: true
+        rtp.message.generation.duration: true
+        rtp.message.publishing.duration: true
+
+# Application-Specific Configuration for Production
+ach:
+  max-file-size: 10485760  # 10 MB
+  max-entries-per-batch: 10000
+  max-batches-per-file: 100
+
+rtp:
+  message-timeout-ms: 30000
+  schema-validation-enabled: true
+  currency-code: USD
+
+mq:
+  exchange-name: ${MQ_EXCHANGE_NAME:rtp-gateway}
+  routing-key: ${MQ_ROUTING_KEY:rtp.credit.transfer}
+  retry-max-attempts: 3
+  retry-backoff-ms: 1000
+  dead-letter-queue-enabled: true
+
+file-storage:
+  upload-directory: /app/uploads
+  archive-directory: /app/archive
+  max-file-age-days: 30

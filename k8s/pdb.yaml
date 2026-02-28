@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ach-to-rtp-service
+  namespace: default
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: ach-to-rtp-service
+  unhealthyPodEvictionPolicy: IfHealthyBudget
