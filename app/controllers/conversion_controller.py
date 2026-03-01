@@ -100,7 +100,7 @@ async def upload_ach_file(
             job_id=job_id,
             filename=file.filename,
             status="PROCESSING",
-            created_at=None  # Would be populated from DB
+            #created_at=None  # Would be populated from DB
         )
         
     except AchParsingException as e:

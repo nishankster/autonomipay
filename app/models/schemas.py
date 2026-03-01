@@ -21,7 +21,9 @@ class FileUploadResponse(BaseModel):
     job_id: str = Field(..., description="Unique job identifier")
     filename: str = Field(..., description="Uploaded filename")
     status: str = Field(..., description="Job status")
-    created_at: datetime = Field(..., description="Job creation timestamp")
+    #created_at: datetime = Field(..., description="Job creation timestamp")
+    created_at: datetime = Field(default_factory=datetime.now, description="Job creation timestamp")
+
 
 
 class JobStatusResponse(BaseModel):

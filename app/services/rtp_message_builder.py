@@ -76,7 +76,7 @@ class RtpMessageBuilder:
             # Remove XML declaration and extra whitespace
             xml_str = '\n'.join([line for line in xml_str.split('\n') if line.strip()])
             
-            logger.info(f"Generated RTP message for entry {entry.trace_number}")
+            logger.info(f"Generated RTP message for entry {entry.trace_number}: {xml_str}")
             
             return xml_str
             

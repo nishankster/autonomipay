@@ -11,15 +11,18 @@ class AchToRtpException(Exception):
 class AchParsingException(AchToRtpException):
     """Raised when ACH file parsing fails."""
     
-    def __init__(self, message: str, line_number: int = None, record_type: str = None):
+    def __init__(self, message: str, line_number: int = None, filename: str = None, record_type: str = None):
         self.message = message
         self.line_number = line_number
         self.record_type = record_type
+        self.file_name = filename
         
         if line_number:
             message = f"Line {line_number}: {message}"
         if record_type:
             message = f"[{record_type}] {message}"
+        if filename:
+            message = f"File '{filename}': {message}"
         
         super().__init__(message)
 

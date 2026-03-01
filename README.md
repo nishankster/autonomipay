@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ACH to RTP Conversion Service (Python/FastAPI)
 
 A production-ready FastAPI microservice that converts NACHA ACH (Automated Clearing House) files to ISO 20022 RTP (Real-Time Payments) messages for asynchronous processing via message queues.
@@ -450,3 +451,7 @@ Proprietary - All rights reserved
 ## 👥 Support
 
 For issues, questions, or contributions, please contact the development team.
+=======
+# autonomipay
+autonomipay 
+>>>>>>> c288917db5abdced6baf730e953bff2ef20bcfc1
