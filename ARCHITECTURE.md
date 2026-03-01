@@ -1,422 +1,283 @@
-# Architecture Documentation
+# ACH to RTP Conversion Service - Architecture Guide
+
+This document describes the system architecture, design patterns, and implementation details of the ACH to RTP Conversion Service.
+
+## Table of Contents
+
+1. [System Overview](#system-overview)
+2. [Technology Stack](#technology-stack)
+3. [Architecture Layers](#architecture-layers)
+4. [Data Flow](#data-flow)
+5. [Component Details](#component-details)
+6. [Design Patterns](#design-patterns)
+7. [Scalability](#scalability)
+8. [Reliability](#reliability)
+
+---
 
 ## System Overview
 
-The ACH to RTP Conversion Service is a production-grade microservice that converts NACHA ACH files into ISO 20022 RTP (pacs.008) messages and publishes them asynchronously to an RTP gateway via message queue.
+The ACH to RTP Conversion Service is a production-grade microservice that converts NACHA ACH files to ISO 20022 RTP messages. The service follows a layered architecture with clear separation of concerns.
+
+### Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Client Applications                      │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    REST API Layer (Port 8080)                    │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ FileUploadController │ HealthCheckController │ StatusCtrl │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Service Layer                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ AchConversionService │ RtpMessageBuilderService          │  │
-│  │ MessagePublisherService                                  │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-        ┌────────────────┼────────────────┐
-        ▼                ▼                ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│ ACH Parser   │  │ RTP Builder  │  │ MQ Publisher │
-└──────────────┘  └──────────────┘  └──────────────┘
-        │                │                │
-        ▼                ▼                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Data Persistence Layer                        │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ PostgreSQL Database │ RabbitMQ Message Queue             │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    REST API Layer                        │
+│  (FastAPI, Pydantic, OpenAPI Documentation)             │
+└─────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────┐
+│                 Controllers Layer                        │
+│  (Request handling, validation, response formatting)    │
+└─────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────┐
+│                  Services Layer                          │
+│  (Business logic, ACH parsing, RTP generation)          │
+└─────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────┐
+│              Data Access Layer                           │
+│  (SQLAlchemy ORM, async database operations)            │
+└─────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────┐
+│         External Services Layer                          │
+│  (PostgreSQL, RabbitMQ, Message Publishing)             │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Component Architecture
+---
+
+## Technology Stack
+
+### Core Framework
+
+| Component | Technology | Version | Purpose |
+|-----------|-----------|---------|---------|
+| **Web Framework** | FastAPI | 0.104+ | Modern async web framework |
+| **ASGI Server** | Uvicorn | 0.24+ | ASGI application server |
+| **Type Validation** | Pydantic | 2.5+ | Data validation and serialization |
+| **Settings** | Pydantic Settings | 2.1+ | Environment configuration |
+
+### Database
+
+| Component | Technology | Version | Purpose |
+|-----------|-----------|---------|---------|
+| **ORM** | SQLAlchemy | 2.0+ | Async object-relational mapping |
+| **Driver** | asyncpg | 0.29+ | PostgreSQL async driver |
+| **Database** | PostgreSQL | 13+ | Relational database |
+| **Migrations** | Alembic | 1.13+ | Database schema management |
+
+### Message Queue
+
+| Component | Technology | Version | Purpose |
+|-----------|-----------|---------|---------|
+| **Broker** | RabbitMQ | 3.10+ | Message queue broker |
+| **Client** | aio-pika | 13.0+ | Async RabbitMQ client |
+| **Protocol** | AMQP | 0.9.1 | Message protocol |
+
+### Monitoring & Logging
+
+| Component | Technology | Version | Purpose |
+|-----------|-----------|---------|---------|
+| **Metrics** | Prometheus Client | 0.19+ | Metrics collection |
+| **Logging** | Python JSON Logger | 2.0+ | Structured JSON logging |
+| **Async Runtime** | asyncio | Built-in | Async I/O runtime |
+
+---
+
+## Architecture Layers
 
 ### 1. REST API Layer
 
-**Responsibility:** Handle HTTP requests and responses
+**Location**: `app/controllers/`
 
-**Components:**
-- `FileUploadController`: Handles ACH file uploads
-- `HealthCheckController`: Provides health check endpoints
-- `ConversionStatusController`: Tracks conversion job status
-- `GlobalExceptionHandler`: Centralized error handling
+The REST API layer handles HTTP requests and responses using FastAPI. Key responsibilities include request validation using Pydantic models, response formatting and serialization, error handling with proper HTTP status codes, and automatic OpenAPI documentation generation.
 
-**Key Features:**
-- Multipart file upload support
-- CORS enabled for cross-origin requests
-- Comprehensive error responses
-- Health check probes for Kubernetes
+**Key Files**:
 
-### 2. Service Layer
+- `conversion_controller.py` - File upload endpoint
+- `job_controller.py` - Job management endpoints
+- `health_controller.py` - Health check endpoints
 
-**Responsibility:** Orchestrate business logic
+### 2. Controllers Layer
 
-**Components:**
-- `AchConversionService`: Main orchestration service
-  - Coordinates parsing, conversion, and publishing
-  - Tracks conversion statistics
-  - Handles batch processing
+Controllers handle request routing and business logic orchestration. They validate input parameters, call appropriate services, handle exceptions and errors, and format responses.
 
-- `RtpMessageBuilderService`: Generates ISO 20022 messages
-  - Converts ACH fields to RTP format
-  - Validates required fields
-  - Escapes XML special characters
+### 3. Services Layer
 
-- `MessagePublisherService`: Publishes to message queue
-  - Sends messages to RabbitMQ
-  - Handles connection errors
-  - Determines retry eligibility
+**Location**: `app/services/`
 
-### 3. Parser Layer
+Services contain core business logic for ACH parsing and RTP message generation.
 
-**Responsibility:** Parse and validate ACH files
+**Key Services**:
 
-**Components:**
-- `AchFileParser`: Main parser class
-  - Reads fixed-width NACHA records
-  - Validates record structure
-  - Builds domain objects
+| Service | Purpose |
+|---------|---------|
+| `AchConversionService` | Orchestrates ACH parsing and RTP generation |
+| `RtpMessageBuilderService` | Builds ISO 20022 RTP messages |
+| `MessagePublisherService` | Publishes messages to RabbitMQ |
 
-- `AchFieldExtractor`: Utility for field extraction
-  - Extracts string, numeric, date, time fields
-  - Validates field values
-  - Handles parsing errors
+### 4. Data Access Layer
 
-**Supported Record Types:**
-- Type 1: File Header
-- Type 5: Batch Header
-- Type 6: Entry Detail
-- Type 7: Addenda
-- Type 8: Batch Control
-- Type 9: File Control
+**Location**: `app/config/database.py`
 
-### 4. Builder Layer
+The data access layer provides async database operations using SQLAlchemy ORM with async database connections, connection pooling, transaction management, and query builders.
 
-**Responsibility:** Generate ISO 20022 RTP messages
+### 5. External Services Layer
 
-**Components:**
-- `RtpMessageBuilderService`: Builds pacs.008 messages
-  - Creates XML structure
-  - Maps ACH fields to RTP fields
-  - Validates message content
+**Location**: `app/config/`
 
-**Output Format:** ISO 20022 pacs.008 XML
+External services handle integration with PostgreSQL and RabbitMQ for job tracking, error logging, audit trails, and asynchronous message publishing.
 
-### 5. Publisher Layer
+---
 
-**Responsibility:** Publish messages to queue
+## Data Flow
 
-**Components:**
-- `MessagePublisherService`: RabbitMQ publisher
-  - Sends messages with headers
-  - Handles connection errors
-  - Determines retry strategy
+### File Upload and Processing Flow
 
-**Message Queue:** RabbitMQ with dead-letter queue support
+The complete flow from file upload to RTP message publishing follows these steps:
 
-### 6. Monitoring Layer
+1. User uploads ACH file via REST API
+2. FastAPI receives multipart/form-data request
+3. Pydantic validates request parameters
+4. Controller calls AchConversionService.process_ach_file()
+5. ACH file is parsed by AchFileParser
+6. Each entry is converted to RTP message by RtpMessageBuilderService
+7. RTP messages are published to RabbitMQ
+8. Job status is persisted to PostgreSQL
+9. Response is returned to client with job_id
+10. RTP gateway consumes messages from RabbitMQ queue
 
-**Responsibility:** Collect metrics and audit logs
+### Job Status Query Flow
 
-**Components:**
-- `MetricsCollector`: Collects application metrics
-  - File upload counters
-  - Entry processing counters
-  - Message generation/publishing timers
+When a client requests job status, the system retrieves the information from the database and returns it with current statistics.
 
-- `AuditLogger`: Records compliance events
-  - File uploads
-  - Message generation
-  - Error events
-  - Security events
+### Error Handling Flow
 
-## Data Models
+Errors are caught, logged, persisted to the database, and the job status is updated to FAILED so clients can query error details.
 
-### ACH Domain Models
+---
 
-```
-AchFile
-├── AchFileHeader
-├── AchBatch[]
-│   ├── AchBatchHeader
-│   ├── AchEntry[]
-│   │   └── AchAddenda[]
-│   └── AchBatchControl
-└── AchFileControl
-```
+## Component Details
 
-**Key Classes:**
-- `AchFile`: Complete ACH file
-- `AchBatch`: Collection of entries
-- `AchEntry`: Individual transaction
-- `AchAddenda`: Additional transaction info
+### ACH Parser
 
-### RTP Message Format
+**Location**: `app/parsers/ach_parser.py`
 
-ISO 20022 pacs.008 XML structure:
-```xml
-<Document>
-  <CstmrCdtTrfInitn>
-    <GrpHdr>...</GrpHdr>
-    <PmtInf>
-      <CdtTrfTxInf>...</CdtTrfTxInf>
-    </PmtInf>
-  </CstmrCdtTrfInitn>
-</Document>
-```
+Parses NACHA ACH files according to the official specification. Supports all record types including file header, batch header, entry detail, addenda, batch control, and file control records.
 
-## Field Mapping: ACH to RTP
+**Key Features**:
 
-| ACH Field | Record Type | RTP Field | pacs.008 Path |
-|-----------|------------|-----------|---------------|
-| Originating Bank | File Header | Debtor Agent | PmtInf/DebtorAgt |
-| Effective Date | Batch Header | Payment Date | PmtInf/CreDtTm |
-| Receiving DFI | Entry Detail | Creditor Agent | CdtTrfTxInf/CdtrAgt |
-| Account Number | Entry Detail | Creditor Account | CdtTrfTxInf/CdtrAcct |
-| Amount | Entry Detail | Transaction Amount | CdtTrfTxInf/Amt |
-| Individual Name | Entry Detail | Creditor Name | CdtTrfTxInf/Cdtr/Nm |
-| Addenda Records | Addenda | Remittance Info | CdtTrfTxInf/RmtInf |
+- Fixed-width field extraction
+- Validation of field formats
+- Error reporting with line numbers
+- Support for multiple batches and entries
 
-## Error Handling Strategy
+### RTP Message Builder
 
-### Exception Hierarchy
+**Location**: `app/services/rtp_message_builder.py`
 
-```
-Exception
-├── AchParsingException
-│   ├── Invalid record format
-│   ├── Field extraction errors
-│   └── Validation failures
-├── RtpMessageException
-│   ├── Missing required fields
-│   ├── Invalid field values
-│   └── Schema validation errors
-├── PublishingException
-│   ├── Connection errors (retryable)
-│   ├── Authentication errors (non-retryable)
-│   └── Queue errors
-└── ValidationException
-    ├── Field validation
-    └── Business rule violations
-```
+Builds ISO 20022 pacs.008 XML messages from ACH entries with comprehensive field mapping between ACH and RTP formats.
 
-### Error Recovery
+### Message Publisher
 
-1. **Parsing Errors**: Log and skip entry
-2. **Message Generation Errors**: Log and mark as failed
-3. **Publishing Errors**: Retry with exponential backoff
-4. **Validation Errors**: Return detailed error message
+**Location**: `app/config/message_queue.py`
 
-## Asynchronous Processing
+Publishes RTP messages to RabbitMQ with reliability features including async message publishing, automatic retry on failure, dead-letter queue for failed messages, and message persistence.
 
-### Message Flow
+---
 
-```
-1. File Upload
-   ↓
-2. Parse ACH File
-   ↓
-3. For Each Entry:
-   ├─ Generate RTP Message
-   ├─ Validate Message
-   └─ Publish to Queue
-   ↓
-4. Return Conversion Result
-```
+## Design Patterns
 
-### Async Features
+### Dependency Injection
 
-- Non-blocking file upload
-- Batch entry processing
-- Async message publishing
-- Configurable retry policy
+FastAPI's `Depends()` provides dependency injection for database sessions and services, making the code testable and maintainable.
 
-## Database Schema
+### Repository Pattern
 
-### Planned Tables (for future versions)
+SQLAlchemy ORM acts as a repository, abstracting database queries and providing a clean interface for data access.
+
+### Service Layer Pattern
+
+Business logic is isolated in service classes, separating concerns and making the code more testable and reusable.
+
+### Factory Pattern
+
+Pydantic models act as factories for domain objects, providing type-safe object creation.
+
+### Observer Pattern
+
+Logging and monitoring observe application events, providing visibility into system behavior.
+
+---
+
+## Scalability
+
+### Horizontal Scaling
+
+The service is designed for horizontal scaling with stateless design, efficient connection pooling, non-blocking async I/O, and decoupled message queue processing.
+
+Multiple instances can be deployed behind a load balancer, all sharing the same PostgreSQL database and RabbitMQ broker.
+
+### Vertical Scaling
+
+Increase resources for single instances by adding CPU, memory, and network bandwidth to improve processing speed and throughput.
+
+### Database Optimization
+
+Indexes on common query fields improve database performance significantly:
 
 ```sql
--- Conversion Jobs
-CREATE TABLE conversion_jobs (
-  id UUID PRIMARY KEY,
-  file_name VARCHAR(255),
-  status VARCHAR(50),
-  total_entries INT,
-  successful_conversions INT,
-  failed_conversions INT,
-  created_at TIMESTAMP,
-  completed_at TIMESTAMP
-);
-
--- Entry Errors
-CREATE TABLE entry_errors (
-  id UUID PRIMARY KEY,
-  job_id UUID REFERENCES conversion_jobs,
-  entry_id VARCHAR(255),
-  error_message TEXT,
-  created_at TIMESTAMP
-);
-
--- Published Messages
-CREATE TABLE published_messages (
-  id UUID PRIMARY KEY,
-  job_id UUID REFERENCES conversion_jobs,
-  entry_id VARCHAR(255),
-  message_id VARCHAR(255),
-  status VARCHAR(50),
-  published_at TIMESTAMP
-);
+CREATE INDEX idx_job_status ON jobs(status);
+CREATE INDEX idx_job_created_at ON jobs(created_at);
+CREATE INDEX idx_error_job_id ON errors(job_id);
 ```
 
-## Configuration Management
+---
 
-### Environment-Specific Profiles
+## Reliability
 
-- **dev**: Local development with verbose logging
-- **prod**: Production with optimized settings
+### Error Handling
 
-### Configuration Parameters
+Comprehensive error handling at all layers ensures graceful degradation and proper error reporting to clients.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `ach.max-file-size` | 10485760 | Maximum file size (bytes) |
-| `ach.max-entries-per-batch` | 10000 | Max entries per batch |
-| `rtp.message-timeout-ms` | 30000 | Message generation timeout |
-| `mq.exchange-name` | rtp-gateway | RabbitMQ exchange |
-| `mq.routing-key` | rtp.credit.transfer | RabbitMQ routing key |
-| `mq.retry-max-attempts` | 3 | Max retry attempts |
+### Retry Logic
 
-## Monitoring and Observability
+Failed jobs can be retried with configurable retry limits and exponential backoff strategies.
 
-### Metrics
+### Dead-Letter Queue
 
-**Counters:**
-- `ach.file.uploads.total`: Total file uploads
-- `ach.entries.processed.total`: Total entries processed
-- `rtp.messages.published.total`: Total messages published
-
-**Timers:**
-- `ach.file.parsing.duration`: File parsing latency
-- `rtp.message.generation.duration`: Message generation latency
-- `rtp.message.publishing.duration`: Publishing latency
-
-### Logging
-
-**Log Levels:**
-- `DEBUG`: Detailed operation logs
-- `INFO`: General application events
-- `WARN`: Warning conditions
-- `ERROR`: Error conditions
-
-**Log Files:**
-- `ach-to-rtp-service.log`: Application logs
-- `audit.log`: Compliance audit logs
+Failed messages are sent to a dead-letter queue for manual review and recovery.
 
 ### Health Checks
 
-- **Liveness Probe**: `/api/v1/health/live`
-- **Readiness Probe**: `/api/v1/health/ready`
-- **Status Endpoint**: `/api/v1/health/status`
+Kubernetes probes monitor service health with liveness and readiness checks for proper orchestration.
 
-## Deployment Architecture
+### Monitoring
 
-### Docker
+Prometheus metrics track service health, request latency, throughput, and error rates for observability.
 
-- Multi-stage build for optimized image size
-- Non-root user for security
-- Health checks configured
-- Alpine base image for minimal footprint
-
-### Kubernetes
-
-- StatelessReplicaSet deployment
-- Service for load balancing
-- ConfigMap for configuration
-- Secrets for credentials
-- HPA for auto-scaling
-- PDB for high availability
+---
 
 ## Security Considerations
 
-### Current Implementation
+### Input Validation
 
-- No authentication (add OAuth2 in production)
-- No rate limiting (add in production)
-- No encryption (add TLS in production)
-- Non-root container user
+All inputs are validated using Pydantic with type checking and field constraints.
 
-### Recommended Enhancements
+### Output Encoding
 
-1. **Authentication**: OAuth2 / API Key
-2. **Authorization**: RBAC for different user roles
-3. **Encryption**: TLS for data in transit
-4. **Secrets Management**: HashiCorp Vault
-5. **Rate Limiting**: Token bucket algorithm
-6. **Input Validation**: Comprehensive validation
-7. **Audit Logging**: Detailed compliance logs
+XML special characters are properly escaped to prevent injection attacks.
 
-## Performance Considerations
+### Secrets Management
 
-### Optimization Strategies
+Sensitive data is stored in environment variables, never hardcoded in source code.
 
-1. **Connection Pooling**: HikariCP for database
-2. **Async Processing**: Spring @Async for non-blocking operations
-3. **Batch Processing**: Process multiple entries efficiently
-4. **Caching**: Cache frequently accessed data
-5. **Message Compression**: Compress large messages
-6. **Lazy Loading**: Load data on demand
-
-### Scalability
-
-- Horizontal scaling via Kubernetes
-- Load balancing across replicas
-- Database connection pooling
-- Message queue buffering
-
-## Disaster Recovery
-
-### Backup Strategy
-
-- Daily database backups
-- Message queue persistence
-- Log archival
-
-### Recovery Procedures
-
-- Database restore from backup
-- Message replay from queue
-- Service restart procedures
+---
 
 ## Future Enhancements
 
-1. **Database Persistence**: Store conversion history
-2. **Job Tracking**: Track long-running jobs
-3. **Retry Logic**: Implement sophisticated retry strategy
-4. **Webhook Notifications**: Notify on job completion
-5. **API Authentication**: Secure API endpoints
-6. **Rate Limiting**: Prevent abuse
-7. **Caching**: Improve performance
-8. **Multi-tenancy**: Support multiple customers
-9. **Kafka Support**: Alternative to RabbitMQ
-10. **GraphQL API**: Modern API interface
-
-## References
-
-- [Spring Boot Architecture Best Practices](https://spring.io/guides)
-- [Microservices Architecture](https://microservices.io/)
-- [NACHA ACH Format](https://www.nacha.org/)
-- [ISO 20022 Standard](https://www.iso20022.org/)
-- [Kubernetes Architecture](https://kubernetes.io/docs/concepts/architecture/)
-- [RabbitMQ Best Practices](https://www.rabbitmq.com/best-practices.html)
+Potential improvements include caching with Redis, webhook callbacks, batch APIs, analytics and reporting, enhanced audit trails, end-to-end encryption, rate limiting, and GraphQL API support.

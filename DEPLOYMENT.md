@@ -1,6 +1,6 @@
-# Deployment Guide
+# ACH to RTP Conversion Service - Deployment Guide
 
-This guide covers deploying the ACH to RTP Conversion Service to various environments.
+This guide covers deploying the ACH to RTP Conversion Service to various environments including local development, Docker, Kubernetes, and production cloud platforms.
 
 ## Table of Contents
 
@@ -8,55 +8,89 @@ This guide covers deploying the ACH to RTP Conversion Service to various environ
 2. [Docker Deployment](#docker-deployment)
 3. [Kubernetes Deployment](#kubernetes-deployment)
 4. [Production Deployment](#production-deployment)
-5. [Monitoring and Observability](#monitoring-and-observability)
-6. [Troubleshooting](#troubleshooting)
+5. [Environment Configuration](#environment-configuration)
+6. [Monitoring and Observability](#monitoring-and-observability)
+7. [Troubleshooting](#troubleshooting)
+
+---
 
 ## Local Development
 
 ### Prerequisites
 
-- Java 17+
-- Maven 3.9+
-- PostgreSQL 15+
-- RabbitMQ 3.12+
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| **Python** | 3.11+ | Runtime |
+| **PostgreSQL** | 13+ | Database |
+| **RabbitMQ** | 3.10+ | Message broker |
+| **Docker** | 20.10+ | Container runtime (optional) |
+| **Docker Compose** | 2.0+ | Multi-container orchestration |
 
-### Setup Steps
+### Quick Setup
 
-1. **Start PostgreSQL**
-   ```bash
-   # Using Docker
-   docker run -d \
-     --name postgres \
-     -e POSTGRES_DB=ach_rtp_db \
-     -e POSTGRES_PASSWORD=postgres \
-     -p 5432:5432 \
-     postgres:15-alpine
-   ```
+**Step 1: Clone and setup environment**
 
-2. **Start RabbitMQ**
-   ```bash
-   # Using Docker
-   docker run -d \
-     --name rabbitmq \
-     -p 5672:5672 \
-     -p 15672:15672 \
-     rabbitmq:3.12-management-alpine
-   ```
+```bash
+cd /home/ubuntu/ach-to-rtp-service
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-3. **Build the project**
-   ```bash
-   mvn clean package
-   ```
+**Step 2: Start dependencies with Docker Compose**
 
-4. **Run the application**
-   ```bash
-   mvn spring-boot:run
-   ```
+```bash
+docker-compose up -d
+```
 
-5. **Verify the service**
-   ```bash
-   curl http://localhost:8080/api/v1/health/status
-   ```
+This starts PostgreSQL and RabbitMQ automatically configured for local development.
+
+**Step 3: Run the application**
+
+```bash
+python -m uvicorn app.main:app --reload
+```
+
+The service will start on `http://localhost:8000`
+
+**Step 4: Verify the service**
+
+```bash
+curl http://localhost:8000/api/v1/health/status
+```
+
+### Manual Database and RabbitMQ Setup
+
+If you prefer to run PostgreSQL and RabbitMQ manually:
+
+**Start PostgreSQL**:
+
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_DB=ach_rtp_db \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 5432:5432 \
+  postgres:15-alpine
+```
+
+**Start RabbitMQ**:
+
+```bash
+docker run -d \
+  --name rabbitmq \
+  -p 5672:5672 \
+  -p 15672:15672 \
+  rabbitmq:3.12-management-alpine
+```
+
+**Create database**:
+
+```bash
+psql -h localhost -U postgres -d ach_rtp_db -c "SELECT 1"
+```
+
+---
 
 ## Docker Deployment
 
@@ -75,30 +109,46 @@ docker push myregistry.azurecr.io/ach-to-rtp-service:1.0.0
 
 ### Run with Docker Compose
 
+**Start all services**:
+
 ```bash
-# Start all services
 docker-compose up -d
+```
 
-# View logs
+**View logs**:
+
+```bash
 docker-compose logs -f ach-to-rtp-service
+```
 
-# Stop all services
+**Stop services**:
+
+```bash
 docker-compose down
 ```
 
-### Manual Docker Run
+### Run Standalone Container
 
 ```bash
 docker run -d \
-  --name ach-to-rtp-service \
-  -e SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/ach_rtp_db \
-  -e SPRING_DATASOURCE_USERNAME=postgres \
-  -e SPRING_DATASOURCE_PASSWORD=postgres \
-  -e SPRING_RABBITMQ_HOST=rabbitmq \
-  -e SPRING_RABBITMQ_PORT=5672 \
-  -p 8080:8080 \
+  -p 8080:8000 \
+  -e DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/ach_rtp_db \
+  -e RABBITMQ_HOST=rabbitmq \
+  -e RABBITMQ_PORT=5672 \
+  --name ach-rtp-service \
   ach-to-rtp-service:1.0.0
 ```
+
+### Docker Image Optimization
+
+The Dockerfile uses multi-stage builds to minimize image size:
+
+- **Builder stage**: Installs dependencies and compiles packages
+- **Runtime stage**: Contains only runtime dependencies and application code
+
+This reduces the final image size from ~1.2GB to ~500MB.
+
+---
 
 ## Kubernetes Deployment
 
@@ -106,297 +156,483 @@ docker run -d \
 
 - Kubernetes cluster (1.24+)
 - kubectl configured
-- Docker image in accessible registry
+- Helm (optional, for package management)
 - PostgreSQL and RabbitMQ services available
 
-### Deployment Steps
+### Quick Deployment
 
-1. **Create namespace** (optional)
-   ```bash
-   kubectl create namespace ach-rtp
-   ```
+**Step 1: Create namespace**
 
-2. **Update secrets and configmaps**
-   ```bash
-   # Edit k8s/secret.yaml with production credentials
-   # Edit k8s/configmap.yaml with production settings
-   ```
+```bash
+kubectl create namespace ach-rtp
+```
 
-3. **Apply manifests**
-   ```bash
-   # Apply in order
-   kubectl apply -f k8s/configmap.yaml
-   kubectl apply -f k8s/secret.yaml
-   kubectl apply -f k8s/deployment.yaml
-   kubectl apply -f k8s/service.yaml
-   ```
+**Step 2: Create secrets**
 
-4. **Verify deployment**
-   ```bash
-   # Check pods
-   kubectl get pods -l app=ach-to-rtp-service
+```bash
+kubectl create secret generic ach-rtp-secrets \
+  --from-literal=database-url=postgresql+asyncpg://postgres:postgres@postgres:5432/ach_rtp_db \
+  --from-literal=rabbitmq-host=rabbitmq \
+  --from-literal=rabbitmq-port=5672 \
+  -n ach-rtp
+```
 
-   # Check service
-   kubectl get svc ach-to-rtp-service
+**Step 3: Apply manifests**
 
-   # View logs
-   kubectl logs -f deployment/ach-to-rtp-service
-   ```
+```bash
+kubectl apply -f k8s/ -n ach-rtp
+```
 
-5. **Port forward for testing**
-   ```bash
-   kubectl port-forward svc/ach-to-rtp-service 8080:80
-   ```
+**Step 4: Verify deployment**
+
+```bash
+kubectl get pods -n ach-rtp
+kubectl logs -f deployment/ach-to-rtp-service -n ach-rtp
+```
+
+### Kubernetes Manifests
+
+The `k8s/` directory contains the following manifests:
+
+| File | Purpose |
+|------|---------|
+| `deployment.yaml` | Pod deployment with replicas |
+| `service.yaml` | Service for internal/external access |
+| `configmap.yaml` | Configuration data |
+| `secret.yaml` | Secrets template (update with actual values) |
+| `rbac.yaml` | ServiceAccount and RBAC policies |
+| `hpa.yaml` | Horizontal Pod Autoscaler |
+| `pdb.yaml` | Pod Disruption Budget |
 
 ### Scaling
 
-```bash
-# Scale to 5 replicas
-kubectl scale deployment ach-to-rtp-service --replicas=5
+**Manual scaling**:
 
-# Auto-scaling (requires metrics-server)
-kubectl autoscale deployment ach-to-rtp-service \
-  --min=3 --max=10 --cpu-percent=70
+```bash
+kubectl scale deployment/ach-to-rtp-service --replicas=3 -n ach-rtp
 ```
 
-### Rolling Update
+**Auto-scaling** (already configured in HPA):
+
+```bash
+kubectl get hpa -n ach-rtp
+```
+
+The HPA automatically scales pods based on CPU and memory usage.
+
+### Rolling Updates
 
 ```bash
 # Update image
 kubectl set image deployment/ach-to-rtp-service \
-  ach-to-rtp-service=myregistry.azurecr.io/ach-to-rtp-service:1.1.0 \
-  --record
+  ach-to-rtp-service=myregistry.azurecr.io/ach-to-rtp-service:2.0.0 \
+  -n ach-rtp
 
-# Check rollout status
-kubectl rollout status deployment/ach-to-rtp-service
+# Monitor rollout
+kubectl rollout status deployment/ach-to-rtp-service -n ach-rtp
 
 # Rollback if needed
-kubectl rollout undo deployment/ach-to-rtp-service
+kubectl rollout undo deployment/ach-to-rtp-service -n ach-rtp
 ```
+
+### Port Forwarding
+
+```bash
+kubectl port-forward svc/ach-to-rtp-service 8080:8000 -n ach-rtp
+```
+
+Then access the service at `http://localhost:8080`
+
+---
 
 ## Production Deployment
 
 ### Pre-Deployment Checklist
 
-- [ ] Database credentials updated in secrets
-- [ ] RabbitMQ credentials updated in secrets
-- [ ] TLS/SSL certificates configured
-- [ ] Log aggregation configured (ELK, Splunk, etc.)
-- [ ] Monitoring and alerting set up (Prometheus, Grafana)
-- [ ] Backup strategy for database configured
-- [ ] Disaster recovery procedures tested
-- [ ] Security policies reviewed and approved
+- [ ] All tests passing (`pytest tests/`)
+- [ ] Code reviewed and merged to main branch
+- [ ] Docker image built and pushed to registry
+- [ ] Environment variables configured
+- [ ] Database backups configured
+- [ ] Monitoring and alerting configured
 - [ ] Load testing completed
-- [ ] Performance baselines established
+- [ ] Security scanning completed
+
+### Cloud Platform Deployment
+
+#### AWS ECS
+
+```bash
+# Create ECR repository
+aws ecr create-repository --repository-name ach-to-rtp-service
+
+# Build and push image
+docker build -t ach-to-rtp-service:1.0.0 .
+docker tag ach-to-rtp-service:1.0.0 <account-id>.dkr.ecr.<region>.amazonaws.com/ach-to-rtp-service:1.0.0
+docker push <account-id>.dkr.ecr.<region>.amazonaws.com/ach-to-rtp-service:1.0.0
+
+# Create ECS task definition and service
+# (See AWS documentation for detailed steps)
+```
+
+#### Azure Container Instances
+
+```bash
+# Create container registry
+az acr create --resource-group myResourceGroup --name myRegistry --sku Basic
+
+# Build and push image
+az acr build --registry myRegistry --image ach-to-rtp-service:1.0.0 .
+
+# Deploy container instance
+az container create \
+  --resource-group myResourceGroup \
+  --name ach-to-rtp-service \
+  --image myRegistry.azurecr.io/ach-to-rtp-service:1.0.0 \
+  --ports 8000 \
+  --environment-variables \
+    DATABASE_URL=postgresql+asyncpg://... \
+    RABBITMQ_HOST=...
+```
+
+#### Google Cloud Run
+
+```bash
+# Build and push image
+gcloud builds submit --tag gcr.io/PROJECT_ID/ach-to-rtp-service:1.0.0
+
+# Deploy to Cloud Run
+gcloud run deploy ach-to-rtp-service \
+  --image gcr.io/PROJECT_ID/ach-to-rtp-service:1.0.0 \
+  --platform managed \
+  --region us-central1 \
+  --set-env-vars DATABASE_URL=...,RABBITMQ_HOST=...
+```
 
 ### Production Configuration
 
-1. **Update application-prod.yml**
-   ```yaml
-   spring:
-     jpa:
-       hibernate:
-         ddl-auto: validate
-     datasource:
-       url: jdbc:postgresql://prod-db:5432/ach_rtp_db
-       hikari:
-         maximum-pool-size: 20
-         minimum-idle: 5
-   
-   logging:
-     level:
-       root: WARN
-       com.example.ach2rtp: INFO
-   ```
-
-2. **Update Kubernetes manifests**
-   - Set resource limits appropriately
-   - Configure replica count (minimum 3)
-   - Enable pod disruption budgets
-   - Configure network policies
-
-3. **Enable TLS**
-   ```bash
-   # Create TLS secret
-   kubectl create secret tls ach-rtp-tls \
-     --cert=path/to/cert.crt \
-     --key=path/to/key.key
-   ```
-
-4. **Configure Ingress**
-   ```yaml
-   apiVersion: networking.k8s.io/v1
-   kind: Ingress
-   metadata:
-     name: ach-to-rtp-ingress
-   spec:
-     tls:
-     - hosts:
-       - ach-rtp.example.com
-         secretName: ach-rtp-tls
-     rules:
-     - host: ach-rtp.example.com
-       http:
-         paths:
-         - path: /
-           pathType: Prefix
-           backend:
-             service:
-               name: ach-to-rtp-service
-               port:
-                 number: 80
-   ```
-
-### Database Migration
+**Environment Variables**:
 
 ```bash
-# Run migrations
-mvn flyway:migrate -Dflyway.configFiles=src/main/resources/flyway.conf
+# Database
+DATABASE_URL=postgresql+asyncpg://user:password@host:5432/ach_rtp_db
+DATABASE_POOL_SIZE=20
+DATABASE_MAX_OVERFLOW=40
 
-# Verify schema
-psql -h prod-db -U postgres -d ach_rtp_db -c "\dt"
+# RabbitMQ
+RABBITMQ_HOST=rabbitmq.example.com
+RABBITMQ_PORT=5672
+RABBITMQ_USER=ach_user
+RABBITMQ_PASSWORD=secure_password
+RABBITMQ_VHOST=/ach-rtp
+
+# Application
+APP_NAME=ACH to RTP Conversion Service
+APP_VERSION=1.0.0
+LOG_LEVEL=INFO
+ENVIRONMENT=production
+
+# File Upload
+MAX_FILE_SIZE_MB=100
+ALLOWED_FILE_EXTENSIONS=.ach
+
+# Processing
+BATCH_SIZE=100
+TIMEOUT_SECONDS=300
+MAX_RETRIES=3
 ```
+
+### SSL/TLS Configuration
+
+For production, enable SSL/TLS with a reverse proxy (nginx, Traefik, etc.):
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name ach-rtp.example.com;
+
+    ssl_certificate /etc/ssl/certs/server.crt;
+    ssl_certificate_key /etc/ssl/private/server.key;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+---
+
+## Environment Configuration
+
+### Configuration Files
+
+- `.env` - Local development (not committed)
+- `.env.example` - Template for environment variables
+- `app/config/settings.py` - Python settings module
+
+### Environment Profiles
+
+The application supports different profiles:
+
+```bash
+# Development (default)
+python -m uvicorn app.main:app --reload
+
+# Production
+ENVIRONMENT=production python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+### Secrets Management
+
+**Option 1: Environment Variables**
+
+```bash
+export DATABASE_URL=postgresql+asyncpg://...
+export RABBITMQ_HOST=rabbitmq.example.com
+python -m uvicorn app.main:app
+```
+
+**Option 2: .env File**
+
+```bash
+# Create .env file
+cp .env.example .env
+# Edit .env with actual values
+python -m uvicorn app.main:app
+```
+
+**Option 3: Kubernetes Secrets**
+
+```bash
+kubectl create secret generic ach-rtp-secrets \
+  --from-literal=database-url=postgresql+asyncpg://... \
+  --from-literal=rabbitmq-host=... \
+  -n ach-rtp
+```
+
+---
 
 ## Monitoring and Observability
 
 ### Prometheus Metrics
 
-```bash
-# Access metrics endpoint
-curl http://localhost:8080/api/actuator/prometheus
+The service exposes Prometheus metrics at `/metrics`:
 
-# Key metrics to monitor:
-# - ach_file_uploads_total
-# - ach_entries_processed_total
-# - rtp_messages_published_total
-# - rtp_message_generation_duration_seconds
+```bash
+curl http://localhost:8000/metrics
 ```
 
-### Grafana Dashboard
+**Configure Prometheus**:
 
-1. Add Prometheus data source
-2. Import dashboard from `monitoring/grafana-dashboard.json`
-3. Configure alerts for critical metrics
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'ach-to-rtp-service'
+    static_configs:
+      - targets: ['localhost:8000']
+    metrics_path: '/metrics'
+```
 
-### Log Aggregation
+### Structured Logging
+
+Logs are output as JSON for easy parsing and aggregation:
 
 ```bash
-# View logs from all pods
-kubectl logs -f deployment/ach-to-rtp-service --all-containers=true
+# View logs
+docker-compose logs -f ach-to-rtp-service | jq .
 
-# Stream logs to ELK stack
-# Configure Filebeat to collect logs from /app/logs/
+# Send to log aggregation service
+# Configure in docker-compose.yml or Kubernetes
 ```
 
 ### Health Checks
 
-```bash
-# Liveness probe
-curl http://localhost:8080/api/v1/health/live
+**Liveness probe** (Kubernetes):
 
-# Readiness probe
-curl http://localhost:8080/api/v1/health/ready
-
-# Full health status
-curl http://localhost:8080/api/v1/health/status
+```yaml
+livenessProbe:
+  httpGet:
+    path: /api/v1/health/live
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 10
 ```
+
+**Readiness probe** (Kubernetes):
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /api/v1/health/ready
+    port: 8000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+```
+
+### Alerting
+
+Configure alerts for:
+
+- Service down (liveness probe failure)
+- High error rate (> 5%)
+- High latency (> 5 seconds)
+- Database connection failures
+- RabbitMQ connection failures
+
+---
 
 ## Troubleshooting
 
-### Pod won't start
+### Service Won't Start
+
+**Check logs**:
 
 ```bash
-# Check pod status
-kubectl describe pod <pod-name>
-
-# View logs
-kubectl logs <pod-name>
-
-# Check events
-kubectl get events --sort-by='.lastTimestamp'
+docker-compose logs ach-to-rtp-service
+# or
+kubectl logs deployment/ach-to-rtp-service -n ach-rtp
 ```
 
-### Database connection issues
+**Common issues**:
+
+- Database connection error: Verify DATABASE_URL and PostgreSQL is running
+- RabbitMQ connection error: Verify RABBITMQ_HOST and RabbitMQ is running
+- Port already in use: Change port or stop other services
+
+### Database Connection Issues
 
 ```bash
-# Test database connectivity
-kubectl exec -it <pod-name> -- psql -h postgres-service -U postgres -d ach_rtp_db -c "SELECT 1"
+# Test connection
+psql -h localhost -U postgres -d ach_rtp_db
 
 # Check connection pool
-curl http://localhost:8080/api/actuator/metrics/hikaricp.connections
+# Monitor in app logs for "connection pool exhausted"
 ```
 
-### RabbitMQ connection issues
+### RabbitMQ Connection Issues
 
 ```bash
-# Test RabbitMQ connectivity
-kubectl exec -it <pod-name> -- curl -i http://rabbitmq-service:15672/api/aliveness-test/
+# Check RabbitMQ status
+docker exec rabbitmq rabbitmqctl status
 
-# Check queue status
-kubectl exec -it <pod-name> -- curl -u guest:guest http://rabbitmq-service:15672/api/queues
+# View RabbitMQ management UI
+# http://localhost:15672 (guest/guest)
 ```
 
-### High memory usage
+### High Memory Usage
 
-```bash
-# Check memory metrics
-kubectl top pod <pod-name>
+- Reduce `DATABASE_POOL_SIZE` in environment variables
+- Increase container memory limits
+- Monitor for memory leaks in application logs
 
-# Increase JVM heap size in deployment
-# Add to container env: -Xmx1024m -Xms512m
-```
+### Slow Processing
 
-### Slow message processing
+- Check database query performance
+- Monitor RabbitMQ queue depth
+- Increase number of replicas for horizontal scaling
+- Optimize batch size
 
-```bash
-# Check message queue depth
-curl -u guest:guest http://localhost:15672/api/queues
+### File Upload Failures
 
-# Monitor processing latency
-curl http://localhost:8080/api/actuator/metrics/rtp.message.generation.duration
-```
+- Check `MAX_FILE_SIZE_MB` setting
+- Verify file is UTF-8 encoded
+- Check available disk space
+- Monitor network bandwidth
 
-## Rollback Procedure
-
-```bash
-# Check rollout history
-kubectl rollout history deployment/ach-to-rtp-service
-
-# Rollback to previous version
-kubectl rollout undo deployment/ach-to-rtp-service
-
-# Rollback to specific revision
-kubectl rollout undo deployment/ach-to-rtp-service --to-revision=2
-
-# Verify rollback
-kubectl rollout status deployment/ach-to-rtp-service
-```
+---
 
 ## Backup and Recovery
 
+### Database Backups
+
 ```bash
-# Backup database
-pg_dump -h prod-db -U postgres ach_rtp_db > ach_rtp_db.sql
+# Backup PostgreSQL
+pg_dump -h localhost -U postgres ach_rtp_db > backup.sql
 
-# Restore database
-psql -h prod-db -U postgres < ach_rtp_db.sql
-
-# Backup Kubernetes resources
-kubectl get all -o yaml > k8s-backup.yaml
+# Restore from backup
+psql -h localhost -U postgres ach_rtp_db < backup.sql
 ```
 
-## Support and Escalation
+### Disaster Recovery
 
-For issues not covered in this guide:
+1. **Backup strategy**: Daily backups to cloud storage
+2. **Recovery time objective (RTO)**: 1 hour
+3. **Recovery point objective (RPO)**: 1 hour
+4. **Test recovery**: Monthly recovery drills
 
-1. Check application logs: `kubectl logs -f deployment/ach-to-rtp-service`
-2. Review Prometheus metrics for anomalies
-3. Check Kubernetes events: `kubectl get events`
-4. Contact the development team with logs and metrics
+---
 
-## References
+## Performance Tuning
 
-- [Spring Boot Deployment Guide](https://spring.io/guides/gs/spring-boot-docker/)
-- [Kubernetes Documentation](https://kubernetes.io/docs/)
-- [RabbitMQ Deployment Guide](https://www.rabbitmq.com/deployment-guide.html)
-- [PostgreSQL Production Setup](https://www.postgresql.org/docs/current/runtime.html)
+### Database Optimization
+
+```sql
+-- Create indexes for common queries
+CREATE INDEX idx_job_status ON jobs(status);
+CREATE INDEX idx_job_created_at ON jobs(created_at);
+CREATE INDEX idx_error_job_id ON errors(job_id);
+```
+
+### Connection Pooling
+
+```python
+# In app/config/database.py
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_size=20,
+    max_overflow=40,
+    pool_pre_ping=True,
+)
+```
+
+### Caching
+
+Consider implementing caching for:
+
+- Job status queries
+- Health check results
+- Configuration values
+
+---
+
+## Security Hardening
+
+- [ ] Enable HTTPS/TLS
+- [ ] Implement rate limiting
+- [ ] Add API authentication (OAuth2, API keys)
+- [ ] Enable CORS only for trusted origins
+- [ ] Regularly update dependencies
+- [ ] Scan for vulnerabilities
+- [ ] Implement request validation
+- [ ] Log security events
+
+---
+
+## Maintenance
+
+### Regular Tasks
+
+- Monitor logs for errors
+- Review metrics and performance
+- Update dependencies monthly
+- Rotate secrets quarterly
+- Test disaster recovery annually
+
+### Upgrade Procedure
+
+1. Test upgrade in staging environment
+2. Create database backup
+3. Deploy new version with rolling update
+4. Monitor for errors
+5. Rollback if issues detected
+
+---
+
+## Support
+
+For deployment issues or questions, refer to the troubleshooting section or contact the development team.
