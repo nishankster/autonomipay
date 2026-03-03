@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: mfa_postgres
+    environment:
+      POSTGRES_USER: mfa_user
+      POSTGRES_PASSWORD: mfa_password
+      POSTGRES_DB: mfa_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mfa_user -d mfa_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mfa_network
+
+  # MFA Microservice
+  mfa_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mfa_api
+    environment:
+      DATABASE_URL: postgresql://mfa_user:mfa_password@postgres:5432/mfa_db
+      JWT_SECRET_KEY: your-super-secret-key-change-in-production
+      ORIGIN: http://localhost:8000
+      RP_ID: localhost
+      RP_NAME: MFA Service
+      DEBUG: "False"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    networks:
+      - mfa_network
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
+
+networks:
+  mfa_network:
+    driver: bridge
