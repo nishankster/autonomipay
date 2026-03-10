@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["*"]
     
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/ach_rtp_db"
+    #DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/ach_rtp_db"
+    DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@localhost:5432/ach_rtp_db"
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 10
     DATABASE_POOL_RECYCLE: int = 3600

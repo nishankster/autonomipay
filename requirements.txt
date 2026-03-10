@@ -1,13 +1,14 @@
 # Core Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+
 
 # Database
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
-alembic==1.13.0
+sqlalchemy==2.0.25  # Latest 2.0.x patch
+alembic==1.13.1     # Latest 1.13.x patch
+psycopg[binary]==3.3.3
 
 # Message Queue
 aio-pika
@@ -16,7 +17,6 @@ aiormq==6.8.0
 # Async Support
 asyncio==3.4.3
 aiofiles==23.2.1
-asyncpg==0.29.0
 
 # HTTP Client
 httpx==0.25.2
